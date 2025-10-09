@@ -57,6 +57,18 @@ class Manager:
         
         return True, parsed_inputs, total_value
 
+    def delete_transaction(self, tx_hash: str):
+        print(f"\n--- Richiesta eliminazione transazione: {tx_hash} ---")
+        self.neo4j_connector.delete_transaction(tx_hash)
+
+    def delete_utxo(self, utxo_id: str):
+        print(f"\n--- Richiesta eliminazione UTXO: {utxo_id} ---")
+        self.neo4j_connector.delete_utxo(utxo_id)
+        
+    def delete_transaction_and_utxos(self, tx_hash: str):
+        print(f"\n--- Richiesta eliminazione completa: {tx_hash} ---")
+        self.neo4j_connector.delete_transaction_and_related_utxos(tx_hash)
+
     def shutdown(self):
         print("\n--- Chiusura delle connessioni... ---")
         self.neo4j_connector.close()

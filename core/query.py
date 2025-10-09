@@ -30,3 +30,22 @@ MATCH (t:Transaction {TXID: $tx_hash})
 MATCH (u:UTXO {TXID: $utxo_id})
 MERGE (t)-[:OUTPUT]->(u)
 """
+
+# --- Query di Cancellazione ---
+
+DELETE_TRANSACTION = """
+MATCH (t:Transaction {TXID: $hash})
+DETACH DELETE t
+"""
+
+DELETE_UTXO = """
+MATCH (u:UTXO {TXID: $utxo_id})
+DETACH DELETE u
+"""
+
+DELETE_TRANSACTION_AND_UTXOS = """
+MATCH (t:Transaction {TXID: $hash})
+OPTIONAL MATCH (u:UTXO)-[:INPUT]->(t)
+OPTIONAL MATCH (t)-[:OUTPUT]->(o:UTXO)
+DETACH DELETE t, u, o
+"""
