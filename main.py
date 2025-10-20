@@ -7,8 +7,9 @@ def display_main_menu():
     print("╚═════════════════════════════════╝")
     print("Cosa vuoi fare?")
     print("  1. Archivia transazione singola")
-    print("  2. Elimina dati dal database")
-    print("  3. Esci")
+    print("  2. Traccia percorso Transazione")
+    print("  3. Elimina dati dal database")
+    print("  4. Esci")
 
 def display_delete_menu():
     """Stampa il sottomenu per le operazioni di cancellazione."""
@@ -26,6 +27,28 @@ def handle_storage(manager: Manager):
         for tx_hash in hash_list:
             if tx_hash:
                 manager.store_transaction_by_hash(tx_hash)
+    except Exception as e:
+        print(f"Si è verificato un errore inaspettato: {e}")
+
+def handle_tracing(manager: Manager):
+    """Gestisce la logica per il tracciamento automatico di un percorso."""
+    try:
+        start_hash = input("Inserisci l'hash della transazione di partenza:\n--> ").strip()
+        if not start_hash:
+            print("Errore: L'hash non può essere vuoto.")
+            return
+        
+        max_steps_str = input("Inserisci il numero massimo di passi (lascia vuoto per tracciare fino alla fine):\n--> ").strip()
+        
+        max_steps = None
+        if max_steps_str:
+            max_steps = int(max_steps_str)
+            if max_steps <= 0:
+                print("Errore: Il numero di passi deve essere un numero positivo.")
+                return
+        
+        manager.trace_transaction_path(start_hash, max_steps)
+
     except Exception as e:
         print(f"Si è verificato un errore inaspettato: {e}")
 
@@ -65,8 +88,10 @@ def main():
             if choice == 1:
                 handle_storage(app_manager)
             elif choice == 2:
-                handle_deletion(app_manager)
+                handle_tracing(app_manager)
             elif choice == 3:
+                handle_deletion(app_manager)
+            elif choice == 4:
                 break
             else:
                 print("Scelta non valida. Riprova.")

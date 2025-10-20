@@ -1,5 +1,6 @@
 from connectors.bitcoin_connector import BitcoinConnector
 from connectors.neo4j_connector import Neo4jConnector
+from connectors.electrs_connector import ElectrsConnector # Importato
 from core.data_parser import DataParser
 from typing import Tuple
 
@@ -7,6 +8,7 @@ class Manager:
     def __init__(self):
         self.btc_connector = BitcoinConnector()
         self.neo4j_connector = Neo4jConnector()
+        self.electrs_connector = ElectrsConnector() 
         self.parser = DataParser()
 
     def store_transaction_by_hash(self, tx_hash: str) -> dict:
@@ -35,6 +37,67 @@ class Manager:
         self.neo4j_connector.store_transaction_info(tx_info, inputs_data, outputs_data)
         print(f"--- Fine processamento transazione: {tx_hash} ---")
         return raw_tx
+
+    def trace_transaction_path(self, start_hash: str, max_steps: int = None):
+        """
+        Analizza una transazione e segue il flusso di denaro per un numero massimo
+        di passi o fino a raggiungere un UTXO non speso.
+        """
+        print("\n--- Avvio Tracciamento Automatico del Percorso ---")
+        current_hash = start_hash
+        step = 1
+
+        while current_hash and (max_steps is None or step <= max_steps):
+            print(f"\n--- Passo {step}: Analisi di {current_hash} ---")
+            raw_tx = self.store_transaction_by_hash(current_hash)
+
+            if not raw_tx:
+                print("Tracciamento interrotto: la transazione non può essere processata.")
+                break
+
+            if max_steps and step == max_steps:
+                print(f"\n--- Raggiunto limite massimo di {max_steps} passi. Tracciamento concluso. ---")
+                break
+
+            next_hash = None
+            highest_value = -1.0
+            unspent_output = None
+
+            # Trova l'output con il valore più alto
+            for i, vout in enumerate(raw_tx.get('vout', [])):
+                current_value = float(vout['value'])
+                if current_value > highest_value:
+                    highest_value = current_value
+                    
+                    # Cerca la transazione che spende questo output
+                    print(f"Tentativo di trovare lo spender per {current_hash[:10]}...:{i} tramite Electrs...")
+                    spending_tx = self.electrs_connector.get_spending_tx(
+                        self.btc_connector, current_hash, i
+                    )
+                    
+                    if spending_tx:
+                        next_hash = spending_tx
+                        unspent_output = None # Resetta se troviamo uno spender
+                    else:
+                        # Se non c'è uno spender, questo è un potenziale UTXO finale
+                        unspent_output = (current_hash, i, current_value)
+                        next_hash = None
+
+            current_hash = next_hash
+
+            if current_hash:
+                print(f"Flusso principale prosegue nella transazione: {current_hash}")
+                step += 1
+            else:
+                print("\n--- Tracciamento Concluso ---")
+                if unspent_output:
+                    txid, vout_index, value = unspent_output
+                    print(f"Raggiunto UTXO non speso con valore più alto:")
+                    print(f"  TXID: {txid}:{vout_index}")
+                    print(f"  Valore: {value} BTC")
+                else:
+                    print("Nessun percorso da seguire o tutti gli output sono stati spesi.")
+
 
     def _process_inputs(self, raw_tx: dict) -> Tuple[bool, list, float]:
         parsed_inputs = []
