@@ -25,44 +25,33 @@ class PublicApiConnector:
             formatted_tx = {
                 "txid": tx_data.get("txid"),
                 "blockhash": status_data.get("block_hash"),
-                "blockheight": status_data.get("block_height"), # Aggiunto per potenziale uso futuro
+                "blockheight": status_data.get("block_height"),
                 "time": status_data.get("block_time"),
                 "vin": [],
                 "vout": []
             }
 
-            # Traduci input
             for vin in tx_data.get("vin", []):
-                 # Gestione input coinbase (diverso formato su mempool)
                 if vin.get("is_coinbase", False):
-                     formatted_tx["vin"].append({"coinbase": True, "sequence": vin.get("sequence")})
-                     continue
-                
-                # Input normali
+                    formatted_tx["vin"].append({"coinbase": True, "sequence": vin.get("sequence")})
+                    continue
                 formatted_tx["vin"].append({
                     "txid": vin.get("txid"),
                     "vout": vin.get("vout"),
-                    
                 })
 
-            # Traduci output
             for i, vout in enumerate(tx_data.get("vout", [])):
-                 # Assicurati che scriptPubKey esista
                 scriptpubkey_address = vout.get("scriptpubkey_address")
                 scriptpubkey_info = {
-                    "hex": vout.get("scriptpubkey"), # Manca 'hex' diretto, usiamo scriptpubkey
+                    "hex": vout.get("scriptpubkey"),
                     "address": scriptpubkey_address,
-                     # Simula 'addresses' come fa RPC
                     "addresses": [scriptpubkey_address] if scriptpubkey_address else []
                 }
-                
                 formatted_tx["vout"].append({
-                    # Converti da satoshi a BTC
                     "value": float(vout.get("value", 0)) / 100_000_000,
-                    "n": i, # L'API mempool non sembra fornire 'n', usiamo l'indice
+                    "n": i,
                     "scriptPubKey": scriptpubkey_info
                 })
-                
             return formatted_tx
 
         except requests.exceptions.Timeout:
@@ -72,18 +61,53 @@ class PublicApiConnector:
             print(f"Errore di connessione all'API pubblica per la transazione {txid}")
             return None
         except requests.exceptions.RequestException as e:
-            # Gestisce errori HTTP (4xx, 5xx) e altri errori di richiesta
             print(f"Errore durante la richiesta all'API pubblica per la transazione {txid}: {e}")
             return None
         except Exception as e:
-            # Cattura altri errori imprevisti (es. parsing JSON fallito)
             print(f"Errore imprevisto durante il recupero da API pubblica per {txid}: {e}")
             return None
 
-    # Aggiungeremo get_block_height e get_spending_tx nei commit successivi
+    def get_spending_tx(self, txid: str, vout_index: int) -> str:
+        """
+        Trova la transazione che spende un UTXO usando l'API pubblica.
+        """
+        try:
+            # mempool.space ha un endpoint specifico per questo scopo
+            response = requests.get(f"{self.base_url}/tx/{txid}/outspend/{vout_index}", timeout=20) # Aumentato timeout
+
+            # Se l'output non è speso, l'API restituisce un 404, che è un caso normale
+            if response.status_code == 404:
+                # print(f"API: UTXO {txid[:10]}:{vout_index} non speso.")
+                return None
+
+            response.raise_for_status() # Solleva errore per altri status code (es. 5xx)
+            spend_data = response.json()
+
+            # Se l'output è speso, restituisce l'hash della transazione che lo spende
+            if spend_data and spend_data.get("spent"):
+                spending_txid = spend_data.get("txid")
+                # print(f"API: Trovato spender {spending_txid[:10]}... per {txid[:10]}:{vout_index}")
+                return spending_txid
+            else:
+                 # print(f"API: UTXO {txid[:10]}:{vout_index} marcato come non speso dalla risposta.")
+                 return None # Non speso secondo l'API
+
+        except requests.exceptions.Timeout:
+            print(f"Timeout durante la richiesta all'API pubblica per lo spender di {txid}:{vout_index}")
+            return None
+        except requests.exceptions.ConnectionError:
+            print(f"Errore di connessione all'API pubblica per lo spender di {txid}:{vout_index}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Errore durante la richiesta all'API pubblica per lo spender di {txid}:{vout_index}: {e}")
+            return None
+        except Exception as e:
+            print(f"Errore imprevisto durante il recupero spender da API per {txid}:{vout_index}: {e}")
+            return None
+
     def get_block_height(self, block_hash: str) -> int:
-         """Ottiene l'altezza di un blocco (placeholder)."""
-         # Implementazione base per ora
+         """Ottiene l'altezza di un blocco."""
+         if not block_hash: return 0
          try:
             response = requests.get(f"{self.base_url}/block/{block_hash}", timeout=10)
             response.raise_for_status()
