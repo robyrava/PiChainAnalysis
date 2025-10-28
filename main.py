@@ -1,4 +1,5 @@
 from core.manager import Manager
+import json
 
 def display_main_menu():
     """Stampa il menu principale delle operazioni."""
@@ -9,7 +10,8 @@ def display_main_menu():
     print("  1. Archivia transazione singola")
     print("  2. Traccia percorso Transazione")
     print("  3. Elimina dati dal database")
-    print("  4. Esci")
+    print("  4. Sezione Analisi") # Nuova Opzione
+    print("  5. Esci") # Scalato a 5
 
 def display_delete_menu():
     """Stampa il sottomenu per le operazioni di cancellazione."""
@@ -18,6 +20,40 @@ def display_delete_menu():
     print("  2. Elimina una transazione e i suoi UTXO")
     print("  3. Elimina un singolo UTXO")
     print("  4. Torna al menu principale")
+
+def display_analysis_menu():
+    """Stampa il sottomenu per le operazioni di analisi."""
+    print("\n--- Menu Analisi ---")
+    print("  1. Analisi Peeling Chain")
+    print("  2. Torna al menu principale") 
+
+def handle_analysis_menu(manager: Manager):
+    """Gestisce la logica per le varie operazioni di analisi."""
+    while True:
+        display_analysis_menu()
+        try:
+            choice = int(input("Scegli un'azione -> "))
+            if choice == 1:
+                start_hash = input("Inserisci l'hash della transazione da cui iniziare l'analisi Peeling Chain:\n--> ").strip()
+                if start_hash:
+                    results = manager.start_peeling_chain_analysis(start_hash)
+                    # Stampa risultati grezzi 
+                    print("\n--- Risultati Analisi Peeling Chain ---")
+                    print(json.dumps(results, indent=2))
+                    print("--------------------------------------")
+                else:
+                    print("Errore: L'hash non può essere vuoto.")
+            elif choice == 2: # Torna indietro
+                break
+            else:
+                print("Scelta non valida. Riprova.")
+        except ValueError:
+            print("Input non valido. Per favore, inserisci un numero.")
+        except Exception as e:
+            print(f"Si è verificato un errore inaspettato durante l'analisi: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 def handle_storage(manager: Manager):
     """Gestisce la logica per archiviare una o più transazioni."""
@@ -92,6 +128,8 @@ def main():
             elif choice == 3:
                 handle_deletion(app_manager)
             elif choice == 4:
+                handle_analysis_menu(app_manager)
+            elif choice == 5:
                 break
             else:
                 print("Scelta non valida. Riprova.")

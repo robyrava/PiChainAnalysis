@@ -15,6 +15,21 @@ class Manager:
         self.using_public_api = False
         self.public_api_steps = 0 # Contatore per ritornare al nodo locale
 
+    def start_peeling_chain_analysis(self, start_hash: str) -> Dict[str, Any]:
+        """
+        Inizializza e avvia l'analisi di una peeling chain.
+        """
+        print("\n--- Avvio del Modulo di Analisi Peeling Chain ---")
+        analyzer = PeelingChainAnalyzer(
+            btc_connector=self.btc_connector,
+            electrs_connector=self.electrs_connector, # Passa il connettore Electrs
+            neo4j_connector=self.neo4j_connector
+        )
+        # Avvia l'analisi e restituisce i risultati
+        analysis_results = analyzer.analyze(start_hash)
+        print("--- Analisi Peeling Chain Completata ---")
+        return analysis_results
+
     def _ask_user_fallback_permission(self) -> bool:
         """
         Chiede all'utente se vuole passare all'API pubblica quando il nodo locale fallisce.

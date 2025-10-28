@@ -99,3 +99,40 @@ class Neo4jConnector:
     @staticmethod
     def _delete_full_transaction(tx, tx_hash: str):
         tx.run(query.DELETE_TRANSACTION_AND_UTXOS, hash=tx_hash)
+
+    # --- METODI DI LETTURA PER ANALISI ---
+    def run_read_query(self, cypher_query: str, parameters: dict = None):
+        """Esegue una query di lettura generica."""
+        if not self.driver: return []
+        try:
+            with self.driver.session() as session:
+                result = session.run(cypher_query, parameters or {})
+                # Restituisce i dati come lista di dizionari
+                return [record.data() for record in result]
+        except Exception as e:
+            print(f"Errore esecuzione query lettura: {e}")
+            return []
+
+    def get_transaction_details(self, tx_hash: str):
+        """Recupera dettagli base di una transazione."""
+        return self.run_read_query(query.GET_TRANSACTION_DETAILS, {"tx_hash": tx_hash})
+
+    def get_transaction_outputs(self, tx_hash: str):
+        """Recupera tutti gli output (UTXO creati) di una transazione."""
+        return self.run_read_query(query.GET_TRANSACTION_OUTPUTS, {"tx_hash": tx_hash})
+
+    def get_transaction_inputs(self, tx_hash: str):
+        """Recupera tutti gli input (UTXO spesi) di una transazione."""
+        return self.run_read_query(query.GET_TRANSACTION_INPUTS, {"tx_hash": tx_hash})
+
+    def find_spending_transaction(self, utxo_id: str):
+        """Trova la transazione che spende un dato UTXO."""
+        return self.run_read_query(query.FIND_SPENDING_TRANSACTION, {"utxo_id": utxo_id})
+
+    def get_full_transaction_data(self, tx_hash: str):
+        """Recupera nodo transazione, input collegati e output collegati."""
+        return self.run_read_query(query.GET_FULL_TRANSACTION_DATA, {"tx_hash": tx_hash})
+
+    def check_transaction_exists(self, tx_hash: str):
+        """Verifica se una transazione esiste nel database."""
+        return self.run_read_query(query.CHECK_TRANSACTION_EXISTS, {"tx_hash": tx_hash})
