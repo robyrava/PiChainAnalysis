@@ -1,8 +1,8 @@
 from core.manager import Manager
 from analysis.visualizer import (
     plot_peeling_chain_analysis, 
-    create_peeling_chain_graph, 
-    create_comprehensive_dashboard,
+    plot_peeling_chain_hourly_distribution,
+    plot_peeling_chain_monthly_distribution,
     create_statistics_report,
     create_fan_in_visualizations,
     create_fan_in_report
@@ -50,9 +50,11 @@ def handle_analysis_menu(manager: Manager):
                     # Mostra il report statistiche avanzate
                     create_statistics_report(results)
                     
-                    # Salva automaticamente il grafico a barre nella cartella plot
+                    # Salva automaticamente i grafici nella cartella plot
                     if results.get('chain'):
                         plot_peeling_chain_analysis(results)
+                        plot_peeling_chain_hourly_distribution(results)
+                        plot_peeling_chain_monthly_distribution(results)
                 else:
                     print("Errore: L'hash non può essere vuoto.")
                     

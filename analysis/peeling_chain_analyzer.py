@@ -318,12 +318,16 @@ class PeelingChainAnalyzer:
                     peeled_value = safe_float_conversion(peeled_output['value'])
                     peeled_percentage = 0.0
 
+                # Estraggo il timestamp della transazione se disponibile
+                tx_time = raw_tx.get('time')
+                
                 chain_data.append({
                     "tx_hash": current_hash,
                     "input_value": total_input,
                     "peeled_value": peeled_value,
                     "change_value": safe_float_conversion(change_output['value']),
-                    "peeled_percentage": peeled_percentage
+                    "peeled_percentage": peeled_percentage,
+                    "time": tx_time  # Aggiungo il timestamp per analisi temporali
                 })
 
                 # Cerco la prossima transazione usando prima Neo4j

@@ -69,288 +69,251 @@ def plot_peeling_chain_analysis(results: Dict[str, Any]):
         print(f"\nErrore durante il salvataggio del grafico: {e}")
 
 
-def create_peeling_chain_graph(results: Dict[str, Any], save_html: bool = True) -> None:
+def plot_peeling_chain_hourly_distribution(results: Dict[str, Any]):
     """
-    Crea una visualizzazione interattiva a grafo della peeling chain.
+    Crea un istogramma della distribuzione oraria delle transazioni nella peeling chain.
+    Mostra in quale fascia oraria sono state effettuate le transazioni della peeling chain.
     
     Args:
-        results: Il dizionario contenente i risultati dell'analisi.
-        save_html: Se True, salva il grafico come file HTML interattivo.
+        results: Il dizionario contenente i risultati dell'analisi della peeling chain.
     """
     chain_data = results.get('chain', [])
     if not chain_data:
-        print("Nessun dato della catena disponibile per la visualizzazione del grafo.")
+        print("Nessun dato della catena disponibile per la distribuzione oraria.")
         return
-
-    # Costruisco il grafo diretto con NetworkX
-    G = nx.DiGraph()
-
-    # Inserisco i nodi e collego gli archi sequenziali
-    for index, tx in enumerate(chain_data):
-        node_id = f"TX_{index}"
-        G.add_node(
-            node_id,
-            tx_hash=tx['tx_hash'][:16] + "...",
-            value=tx.get('peeled_value', 0.0),
-            percentage=tx.get('peeled_percentage', 0.0),
-            input_value=tx.get('input_value', 0.0)
-        )
-
-        if index < len(chain_data) - 1:
-            G.add_edge(
-                node_id,
-                f"TX_{index+1}",
-                value=tx.get('change_value', 0.0)
-            )
-
-    # Calcolo le coordinate dei nodi con un layout primaverile
-    pos = nx.spring_layout(G, k=3, iterations=50)
-
-    # Raccolgo le coordinate e le etichette per gli archi
-    edge_x, edge_y, edge_text = [], [], []
-    for edge in G.edges():
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        edge_x.extend([x0, x1, None])
-        edge_y.extend([y0, y1, None])
-        flow_value = G.edges[edge].get('value', 0.0)
-        edge_text.append(f"Flusso: {flow_value:.8f} BTC")
-
-    # Estraggo le informazioni sui nodi da passare a Plotly
-    node_x, node_y = [], []
-    node_text, node_sizes, node_percentages = [], [], []
-
-    for node in G.nodes():
-        x, y = pos[node]
-        node_x.append(x)
-        node_y.append(y)
-
-        info = G.nodes[node]
-        node_percentages.append(info.get('percentage', 0.0))
-        node_value = info.get('value', 0.0)
-        node_sizes.append(max(15, min(65, 20 + node_value * 900)))
-
-        node_text.append(
-            f"Hash: {info['tx_hash']}<br>"
-            f"Valore Pelato: {node_value:.8f} BTC<br>"
-            f"Percentuale: {info.get('percentage', 0.0):.2f}%<br>"
-            f"Input Totale: {info.get('input_value', 0.0):.8f} BTC"
-        )
-
-    # Genero la figura Plotly
-    fig = go.Figure()
-
-    # Disegno gli archi direzionali
-    fig.add_trace(
-        go.Scatter(
-            x=edge_x,
-            y=edge_y,
-            mode='lines',
-            line=dict(color='#888', width=2),
-            hoverinfo='text',
-            text=edge_text,
-            name='Flussi'
-        )
-    )
-
-    # Disegno i nodi dimensionati e colorati
-    fig.add_trace(
-        go.Scatter(
-            x=node_x,
-            y=node_y,
-            mode='markers',
-            hoverinfo='text',
-            text=node_text,
-            marker=dict(
-                size=node_sizes,
-                color=node_percentages,
-                colorscale='Oranges',
-                colorbar=dict(title="Percentuale Pelata (%)"),
-                line=dict(width=2, color='darkred'),
-                showscale=True
-            ),
-            name='Transazioni'
-        )
-    )
-
-    # Imposto il layout complessivo del grafo
-    fig.update_layout(
-        title=dict(
-            text="Grafo Interattivo della Peeling Chain",
-            x=0.5,
-            font=dict(size=20)
-        ),
-        showlegend=False,
-        hovermode='closest',
-        margin=dict(b=20, l=5, r=5, t=40),
-        annotations=[
-            dict(
-                text="Dimensione del nodo = Valore pelato | Colore = Percentuale pelata",
-                showarrow=False,
-                xref='paper',
-                yref='paper',
-                x=0.005,
-                y=-0.002,
-                xanchor='left',
-                yanchor='bottom'
-            )
-        ],
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        plot_bgcolor='white'
-    )
-
-    if save_html:
-        filename = 'peeling_chain_graph.html'
-        fig.write_html(filename)
-        print(f"\nGrafo interattivo salvato come: {filename}")
-
-        try:
-            webbrowser.open(f'file://{os.path.abspath(filename)}')
-        except Exception:
-            pass
+    
+    # Raccolgo le ore delle transazioni
+    hourly_counts = [0] * 24  # Array per 24 ore (0-23)
+    transactions_with_time = 0
+    
+    for tx in chain_data:
+        tx_time = tx.get('time')
+        if tx_time:
+            try:
+                # Converto il timestamp in ora
+                if isinstance(tx_time, str):
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(tx_time.replace('Z', '+00:00'))
+                elif isinstance(tx_time, int):
+                    from datetime import datetime, timezone
+                    dt = datetime.fromtimestamp(tx_time, tz=timezone.utc)
+                else:
+                    continue
+                
+                hour = dt.hour
+                hourly_counts[hour] += 1
+                transactions_with_time += 1
+            except Exception as e:
+                print(f"Errore nel parsing del timestamp: {e}")
+                continue
+    
+    # Se non trovo dati temporali, non creo il grafico
+    if transactions_with_time == 0:
+        print(f"Nessun dato temporale disponibile per le transazioni (0/{len(chain_data)} transazioni con timestamp)")
+        return
+    
+    # Preparo i dati per il grafico
+    hours = [f"{h:02d}:00" for h in range(24)]
+    
+    # Creo il grafico con matplotlib
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # Disegno l'istogramma con colori graduati (uso il colormap viridis)
+    colors = plt.cm.viridis(np.linspace(0.3, 0.9, 24))
+    bars = ax.bar(range(24), hourly_counts, color=colors, edgecolor='black', linewidth=1)
+    
+    # Aggiungo i valori sopra le barre (solo se > 0)
+    for i, (bar, count) in enumerate(zip(bars, hourly_counts)):
+        if count > 0:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2.0, height,
+                    f'{int(count)}',
+                    ha='center', va='bottom', fontsize=9, weight='bold')
+    
+    # Imposto etichette e titolo
+    ax.set_xlabel('Fascia Oraria (UTC)', fontsize=12, weight='bold')
+    ax.set_ylabel('Numero di Transazioni', fontsize=12, weight='bold')
+    ax.set_title('Distribuzione Oraria delle Transazioni Peeling Chain', fontsize=16, weight='bold', pad=20)
+    
+    # Imposto le etichette dell'asse X
+    ax.set_xticks(range(24))
+    ax.set_xticklabels(hours, rotation=45, ha='right', fontsize=9)
+    
+    # Imposto l'asse Y per mostrare solo valori interi
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Aggiungo una griglia per migliorare la leggibilità
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Identifico l'ora di picco
+    if max(hourly_counts) > 0:
+        max_hour = hourly_counts.index(max(hourly_counts))
+        max_count = max(hourly_counts)
     else:
-        fig.show()
+        max_hour = 0
+        max_count = 0
+    
+    # Inserisco informazioni statistiche
+    info_text = (f'Transazioni con timestamp: {transactions_with_time}/{len(chain_data)}\n'
+                 f'Ora di picco: {max_hour:02d}:00-{(max_hour+1)%24:02d}:00 ({max_count} tx)\n'
+                 f'Media per ora: {transactions_with_time/24:.1f} transazioni')
+    
+    ax.text(0.98, 0.98, info_text,
+            transform=ax.transAxes,
+            fontsize=10,
+            verticalalignment='top',
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8, edgecolor='blue'))
+    
+    plt.tight_layout()
+    
+    # Salvo il file
+    try:
+        # Creo la cartella plot se non esiste
+        plot_dir = 'plot'
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+        
+        filename = os.path.join(plot_dir, 'peeling_chain_hourly_distribution.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Grafico distribuzione oraria peeling chain salvato come: {filename}")
+        plt.close()
+    except Exception as e:
+        print(f"\nErrore durante il salvataggio del grafico orario: {e}")
+        plt.close()
 
 
-def create_comprehensive_dashboard(results: Dict[str, Any]) -> None:
+def plot_peeling_chain_monthly_distribution(results: Dict[str, Any]):
     """
-    Genera statistiche e grafici di sintesi.
+    Crea un istogramma della distribuzione mensile delle transazioni nella peeling chain.
+    Mostra in quali mesi dell'anno sono state effettuate le transazioni della peeling chain.
     
     Args:
-        results: Il dizionario contenente i risultati dell'analisi.
+        results: Il dizionario contenente i risultati dell'analisi della peeling chain.
     """
     chain_data = results.get('chain', [])
     if not chain_data:
+        print("Nessun dato della catena disponibile per la distribuzione mensile.")
         return
-
-    # Estraggo i dati principali della catena
-    steps = list(range(1, len(chain_data) + 1))
-    percentages = [tx.get('peeled_percentage', 0.0) for tx in chain_data]
-    values = [tx.get('peeled_value', 0.0) for tx in chain_data]
-    input_values = [tx.get('input_value', 0.0) for tx in chain_data]
-
-    # Imposto la struttura dei subplot
-    fig = make_subplots(
-        rows=2,
-        cols=2,
-        subplot_titles=(
-            'Percentuali Pelate per Transazione',
-            'Distribuzione delle Percentuali',
-            'Valori delle Transazioni nel Tempo',
-            'Efficienza del Peeling'
-        ),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": True}, {"secondary_y": False}]]
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=steps,
-            y=percentages,
-            mode='lines+markers',
-            name='% Pelata',
-            line=dict(color='red', width=3)
-        ),
-        row=1,
-        col=1
-    )
-
-    # Inserisco la media come riferimento visivo
-    avg_percentage = results.get('average_peeled_percentage', 0.0)
-    fig.add_hline(
-        y=avg_percentage,
-        line_dash='dash',
-        line_color='blue',
-        annotation_text=f"Media: {avg_percentage:.2f}%",
-        row=1,
-        col=1
-    )
-
-    # Mostro la distribuzione delle percentuali pelate
-    fig.add_trace(
-        go.Histogram(
-            x=percentages,
-            nbinsx=10,
-            name='Distribuzione %',
-            marker_color='indianred',
-            opacity=0.75
-        ),
-        row=1,
-        col=2
-    )
-
-    # Confronto valore pelato e input usando l'asse secondario
-    fig.add_trace(
-        go.Scatter(
-            x=steps,
-            y=values,
-            mode='lines+markers',
-            name='Valore Pelato',
-            line=dict(color='green')
-        ),
-        row=2,
-        col=1
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=steps,
-            y=input_values,
-            mode='lines+markers',
-            name='Valore Input',
-            line=dict(color='blue')
-        ),
-        row=2,
-        col=1,
-        secondary_y=True
-    )
-
-    # Calcolo l'efficienza come rapporto pelato/input
-    efficiency = [v / i if i > 0 else 0 for v, i in zip(values, input_values)]
-    fig.add_trace(
-        go.Bar(
-            x=steps,
-            y=efficiency,
-            name='Efficienza',
-            marker_color='orange',
-            opacity=0.8
-        ),
-        row=2,
-        col=2
-    )
-
-    # Aggiorno layout e assi per migliore leggibilità
-    fig.update_layout(
-        title_text="Dashboard Analisi Peeling Chain",
-        title_x=0.5,
-        height=800,
-        showlegend=True,
-        bargap=0.2
-    )
-
-    fig.update_xaxes(title_text="Passo nella Catena", row=1, col=1)
-    fig.update_yaxes(title_text="Percentuale Pelata (%)", row=1, col=1)
-
-    fig.update_xaxes(title_text="Percentuale Pelata (%)", row=1, col=2)
-    fig.update_yaxes(title_text="Frequenza", row=1, col=2)
-
-    fig.update_xaxes(title_text="Passo nella Catena", row=2, col=1)
-    fig.update_yaxes(title_text="Valore Pelato (BTC)", row=2, col=1)
-    fig.update_yaxes(title_text="Valore Input (BTC)", row=2, col=1, secondary_y=True)
-
-    fig.update_xaxes(title_text="Passo nella Catena", row=2, col=2)
-    fig.update_yaxes(title_text="Efficienza (Pelato/Input)", row=2, col=2)
-
-    # Salvo la dashboard e provo ad aprirla
-    filename = 'peeling_chain_dashboard.html'
-    fig.write_html(filename)
-    print(f"\nDashboard completa salvata come: {filename}")
-
+    
+    # Raccolgo i mesi delle transazioni
+    monthly_counts = [0] * 12  # Array per 12 mesi (0-11, Gennaio-Dicembre)
+    transactions_with_time = 0
+    year_data = {}  # Per tracciare anche gli anni
+    
+    for tx in chain_data:
+        tx_time = tx.get('time')
+        if tx_time:
+            try:
+                # Converto il timestamp in data
+                if isinstance(tx_time, str):
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(tx_time.replace('Z', '+00:00'))
+                elif isinstance(tx_time, int):
+                    from datetime import datetime, timezone
+                    dt = datetime.fromtimestamp(tx_time, tz=timezone.utc)
+                else:
+                    continue
+                
+                month = dt.month - 1  # 0-indexed (0=Gennaio, 11=Dicembre)
+                year = dt.year
+                
+                monthly_counts[month] += 1
+                transactions_with_time += 1
+                
+                # Tengo traccia degli anni
+                if year not in year_data:
+                    year_data[year] = 0
+                year_data[year] += 1
+                
+            except Exception as e:
+                print(f"Errore nel parsing del timestamp: {e}")
+                continue
+    
+    # Se non trovo dati temporali, non creo il grafico
+    if transactions_with_time == 0:
+        print(f"Nessun dato temporale disponibile per le transazioni (0/{len(chain_data)} transazioni con timestamp)")
+        return
+    
+    # Preparo i dati per il grafico
+    month_names = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 
+                   'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
+    
+    # Creo il grafico con matplotlib
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # Disegno l'istogramma con colori graduati (uso il colormap cool per effetto stagionale)
+    colors = plt.cm.cool(np.linspace(0.2, 0.9, 12))
+    bars = ax.bar(range(12), monthly_counts, color=colors, edgecolor='black', linewidth=1.5, width=0.8)
+    
+    # Aggiungo i valori sopra le barre (solo se > 0)
+    for i, (bar, count) in enumerate(zip(bars, monthly_counts)):
+        if count > 0:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2.0, height,
+                    f'{int(count)}',
+                    ha='center', va='bottom', fontsize=10, weight='bold')
+    
+    # Imposto etichette e titolo
+    ax.set_xlabel('Mese', fontsize=12, weight='bold')
+    ax.set_ylabel('Numero di Transazioni', fontsize=12, weight='bold')
+    ax.set_title('Distribuzione Mensile delle Transazioni Peeling Chain', fontsize=16, weight='bold', pad=20)
+    
+    # Imposto le etichette dell'asse X
+    ax.set_xticks(range(12))
+    ax.set_xticklabels(month_names, fontsize=10)
+    
+    # Imposto l'asse Y per mostrare solo valori interi
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    
+    # Aggiungo una griglia per migliorare la leggibilità
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Identifico il mese di picco
+    if max(monthly_counts) > 0:
+        max_month = monthly_counts.index(max(monthly_counts))
+        max_count = max(monthly_counts)
+    else:
+        max_month = 0
+        max_count = 0
+    
+    # Preparo informazioni sugli anni
+    years_info = ', '.join([f'{year}: {count} tx' for year, count in sorted(year_data.items())])
+    if len(years_info) > 60:
+        years_info = f'{len(year_data)} anni diversi'
+    
+    # Inserisco informazioni statistiche
+    info_text = (f'Transazioni con timestamp: {transactions_with_time}/{len(chain_data)}\n'
+                 f'Mese di picco: {month_names[max_month]} ({max_count} tx)\n'
+                 f'Media per mese: {transactions_with_time/12:.1f} transazioni\n'
+                 f'Periodo: {years_info}')
+    
+    ax.text(0.98, 0.98, info_text,
+            transform=ax.transAxes,
+            fontsize=9,
+            verticalalignment='top',
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8, edgecolor='green'))
+    
+    plt.tight_layout()
+    
+    # Salvo il file
     try:
-        webbrowser.open(f'file://{os.path.abspath(filename)}')
-    except Exception:
-        pass
+        # Creo la cartella plot se non esiste
+        plot_dir = 'plot'
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+        
+        filename = os.path.join(plot_dir, 'peeling_chain_monthly_distribution.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Grafico distribuzione mensile peeling chain salvato come: {filename}")
+        plt.close()
+    except Exception as e:
+        print(f"\nErrore durante il salvataggio del grafico mensile: {e}")
+        plt.close()
+
 
 
 def create_statistics_report(results: Dict[str, Any]) -> None:
