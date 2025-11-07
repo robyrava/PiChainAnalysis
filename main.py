@@ -1,5 +1,13 @@
 from core.manager import Manager
-import json
+from analysis.visualizer import (
+    plot_peeling_chain_analysis, 
+    create_peeling_chain_graph, 
+    create_comprehensive_dashboard,
+    create_statistics_report,
+    create_fan_in_visualizations,
+    create_fan_in_report
+)
+from analysis.fan_in_analyzer import FanInAnalyzer
 
 def display_main_menu():
     """Stampa il menu principale delle operazioni."""
@@ -10,8 +18,8 @@ def display_main_menu():
     print("  1. Archivia transazione singola")
     print("  2. Traccia percorso Transazione")
     print("  3. Elimina dati dal database")
-    print("  4. Sezione Analisi") # Nuova Opzione
-    print("  5. Esci") # Scalato a 5
+    print("  4. Sezione Analisi")
+    print("  5. Esci") 
 
 def display_delete_menu():
     """Stampa il sottomenu per le operazioni di cancellazione."""
@@ -25,7 +33,8 @@ def display_analysis_menu():
     """Stampa il sottomenu per le operazioni di analisi."""
     print("\n--- Menu Analisi ---")
     print("  1. Analisi Peeling Chain")
-    print("  2. Torna al menu principale") 
+    print("  2. Analisi Fan-In")
+    print("  3. Torna al menu principale")
 
 def handle_analysis_menu(manager: Manager):
     """Gestisce la logica per le varie operazioni di analisi."""
@@ -37,23 +46,55 @@ def handle_analysis_menu(manager: Manager):
                 start_hash = input("Inserisci l'hash della transazione da cui iniziare l'analisi Peeling Chain:\n--> ").strip()
                 if start_hash:
                     results = manager.start_peeling_chain_analysis(start_hash)
-                    # Stampa risultati grezzi 
-                    print("\n--- Risultati Analisi Peeling Chain ---")
-                    print(json.dumps(results, indent=2))
-                    print("--------------------------------------")
+                    
+                    # Mostra il report statistiche avanzate
+                    create_statistics_report(results)
+                    
+                    # Salva automaticamente il grafico a barre nella cartella plot
+                    if results.get('chain'):
+                        plot_peeling_chain_analysis(results)
                 else:
                     print("Errore: L'hash non può essere vuoto.")
-            elif choice == 2: # Torna indietro
+                    
+            elif choice == 2:
+                tx_hash = input("Inserisci il TXID sospetto di Fan-In:\n--> ").strip()
+                if tx_hash:
+                    try:
+                        # Crea l'analizzatore Fan-In
+                        fan_in_analyzer = FanInAnalyzer(
+                            btc_connector=manager.btc_connector,
+                            neo4j_connector=manager.neo4j_connector,
+                            public_api_connector=manager.public_api_connector
+                        )
+                        
+                        # Esegui l'analisi
+                        results = fan_in_analyzer.analyze(tx_hash)
+                        
+                        if results:
+                            # Mostra il report testuale
+                            create_fan_in_report(results)
+                            
+                            # Genera i grafici
+                            create_fan_in_visualizations(results)
+                        else:
+                            print("Analisi fallita. Verifica che la transazione esista.")
+                    except Exception as e:
+                        print(f"\nErrore durante l'analisi Fan-In: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print("Errore: L'hash non può essere vuoto.")
+                    
+            elif choice == 3:
                 break
             else:
                 print("Scelta non valida. Riprova.")
         except ValueError:
             print("Input non valido. Per favore, inserisci un numero.")
         except Exception as e:
-            print(f"Si è verificato un errore inaspettato durante l'analisi: {e}")
+            print(f"Si è verificato un errore inaspettato: {e}")
             import traceback
             traceback.print_exc()
-
 
 def handle_storage(manager: Manager):
     """Gestisce la logica per archiviare una o più transazioni."""
@@ -84,6 +125,7 @@ def handle_tracing(manager: Manager):
                 return
         
         manager.trace_transaction_path(start_hash, max_steps)
+
 
     except Exception as e:
         print(f"Si è verificato un errore inaspettato: {e}")

@@ -34,13 +34,21 @@ class Neo4jConnector:
     def _create_tx_node(tx, tx_info: dict):
         tx.run(query.CREATE_TX_NODE, **tx_info)
         print(f"--> Creato nodo TX: {tx_info['TXID']}")
-
+    
     @staticmethod
     def _create_input_utxos(tx, inputs: list):
+        """
+        Per ogni input, trova l'UTXO esistente, lo aggiorna a 'speso'
+        e aggiunge il spending_hash, poi crea la relazione :INPUT.
+        """
         for utxo in inputs:
             utxo_id = f"{utxo['transaction_hash']}:{utxo['index']}"
             spending_hash = utxo['spending_transaction_hash']
+            
+            # Esegue la query per aggiornare l'UTXO esistente, passando TUTTI i parametri
             tx.run(query.UPDATE_SPENT_UTXO, utxo_id=utxo_id, spending_tx_hash=spending_hash)
+            
+            # Crea la relazione di input verso la nuova transazione
             tx.run(query.CREATE_INPUT_RELATION, utxo_id=utxo_id, tx_hash=spending_hash)
             print(f"--> Aggiornato e collegato UTXO di input: {utxo_id}")
 
@@ -48,15 +56,16 @@ class Neo4jConnector:
     def _create_output_utxos(tx, outputs: list):
         for utxo in outputs:
             utxo_id = f"{utxo['transaction_hash']}:{utxo['index']}"
-            tx.run(query.CREATE_OUTPUT_UTXO_NODE,
-                   utxo_id=utxo_id,
+            tx.run(query.CREATE_OUTPUT_UTXO_NODE, 
+                   utxo_id=utxo_id, 
                    wallet_address=utxo['wallet_address'],
-                   value=utxo['value'],
+                   value=utxo['value'], 
                    is_spent=utxo['is_spent'],
+                   # Passiamo i nuovi parametri alla query
                    time=utxo['time'],
                    block_id=utxo['block_id'])
-            tx.run(query.CREATE_OUTPUT_RELATION,
-                   tx_hash=utxo['transaction_hash'],
+            tx.run(query.CREATE_OUTPUT_RELATION, 
+                   tx_hash=utxo['transaction_hash'], 
                    utxo_id=utxo_id)
             print(f"--> Creato/collegato UTXO di output: {utxo_id}")
 
@@ -102,35 +111,45 @@ class Neo4jConnector:
 
     # --- METODI DI LETTURA PER ANALISI ---
     def run_read_query(self, cypher_query: str, parameters: dict = None):
-        """Esegue una query di lettura generica."""
-        if not self.driver: return []
+        """
+        Esegue una query di lettura e restituisce i risultati.
+        
+        Args:
+            cypher_query: La query Cypher da eseguire
+            parameters: Parametri per la query
+            
+        Returns:
+            Lista di record/risultati
+        """
+        if not self.driver:
+            return []
+        
         try:
             with self.driver.session() as session:
                 result = session.run(cypher_query, parameters or {})
-                # Restituisce i dati come lista di dizionari
                 return [record.data() for record in result]
         except Exception as e:
-            print(f"Errore esecuzione query lettura: {e}")
+            print(f"Errore durante l'esecuzione della query di lettura: {e}")
             return []
 
     def get_transaction_details(self, tx_hash: str):
-        """Recupera dettagli base di una transazione."""
+        """Recupera i dettagli di una transazione."""
         return self.run_read_query(query.GET_TRANSACTION_DETAILS, {"tx_hash": tx_hash})
 
     def get_transaction_outputs(self, tx_hash: str):
-        """Recupera tutti gli output (UTXO creati) di una transazione."""
+        """Recupera tutti gli output di una transazione."""
         return self.run_read_query(query.GET_TRANSACTION_OUTPUTS, {"tx_hash": tx_hash})
 
     def get_transaction_inputs(self, tx_hash: str):
-        """Recupera tutti gli input (UTXO spesi) di una transazione."""
+        """Recupera tutti gli input di una transazione."""
         return self.run_read_query(query.GET_TRANSACTION_INPUTS, {"tx_hash": tx_hash})
 
     def find_spending_transaction(self, utxo_id: str):
-        """Trova la transazione che spende un dato UTXO."""
+        """Trova la transazione che spende un UTXO specifico."""
         return self.run_read_query(query.FIND_SPENDING_TRANSACTION, {"utxo_id": utxo_id})
 
     def get_full_transaction_data(self, tx_hash: str):
-        """Recupera nodo transazione, input collegati e output collegati."""
+        """Recupera tutti i dati di una transazione (input, output, dettagli)."""
         return self.run_read_query(query.GET_FULL_TRANSACTION_DATA, {"tx_hash": tx_hash})
 
     def check_transaction_exists(self, tx_hash: str):

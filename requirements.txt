@@ -2,3 +2,11 @@ neo4j
 python-dotenv
 python-bitcoinrpc
 requests
+numpy
+matplotlib
+networkx
+plotly
+pyvis
+seaborn
+scikit-learn
+scipy

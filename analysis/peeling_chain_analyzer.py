@@ -1,236 +1,354 @@
+# analysis/peeling_chain_analyzer.py
 import numpy as np
 from typing import Tuple, Dict, Any, List, Optional
 
+
 def safe_float_conversion(value, default=0.0):
-    """Converte in modo sicuro un valore in float."""
-    if value is None: return default
-    try: return float(value)
-    except (ValueError, TypeError): return default
+    """
+    Converte in modo sicuro un valore in float.
+    
+    Args:
+        value: Valore da convertire
+        default: Valore di default se la conversione fallisce
+        
+    Returns:
+        float: Valore convertito o default
+    """
+    if value is None:
+        return default
+    
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
 
 def check_neo4j_transaction_coverage(neo4j_connector, tx_hash):
-    """Verifica la completezza dei dati di una transazione in Neo4j."""
+    """
+    Verifica la completezza dei dati di una transazione in Neo4j.
+    
+    Args:
+        neo4j_connector: Connettore Neo4j
+        tx_hash: Hash della transazione da verificare
+        
+    Returns:
+        dict: Report della copertura dati
+    """
     try:
+        # Verifico l'esistenza della transazione
         exists_result = neo4j_connector.check_transaction_exists(tx_hash)
         exists = exists_result[0]['exists'] if exists_result else False
+        
         if not exists:
             return {"exists": False, "complete": False, "message": "Transazione non trovata in Neo4j"}
         
-        return {"exists": True, "complete": True, "message": "Transazione trovata"}
+        # Verifico la completezza di input e output
+        outputs_result = neo4j_connector.get_transaction_outputs(tx_hash)
+        inputs_result = neo4j_connector.get_transaction_inputs(tx_hash)
+        
+        output_count = len(outputs_result) if outputs_result else 0
+        input_count = len(inputs_result) if inputs_result else 0
+        
+        # Analizzo le possibili transazioni spender
+        spending_info = []
+        if outputs_result:
+            for output in outputs_result:
+                spending_info.append({
+                    "utxo_id": output['utxo_id'],
+                    "value": output['value'],
+                    "is_spent": output['is_spent'],
+                    "spending_tx_hash": output['spending_tx_hash']
+                })
+        
+        return {
+            "exists": True,
+            "complete": output_count > 0 and input_count >= 0,
+            "output_count": output_count,
+            "input_count": input_count,
+            "spending_info": spending_info,
+            "message": f"Transazione completa: {input_count} input, {output_count} output"
+        }
+        
     except Exception as e:
-        return {"exists": False, "complete": False, "message": f"Errore controllo Neo4j: {e}"}
-
+        return {"exists": False, "complete": False, "message": f"Errore: {e}"}
 
 class PeelingChainAnalyzer:
     """
-    Analizza le peeling chain, affidandosi principalmente a Neo4j.
+    Questa classe è responsabile dell'analisi delle peeling chain.
+    Utilizza principalmente Neo4j come fonte dati e si connette al nodo Bitcoin
+    solo quando servono informazioni aggiuntive non presenti nel database.
     """
     def __init__(self, btc_connector, electrs_connector, neo4j_connector):
+        """
+        Inizializza l'analizzatore con i connettori necessari.
+
+        Args:
+            btc_connector: Un'istanza di BitcoinConnector per dati aggiuntivi.
+            electrs_connector: Un'istanza di ElectrsConnector (mantenuto per compatibilità).
+            neo4j_connector: Un'istanza di Neo4jConnector per i dati principali.
+        """
         self.btc_connector = btc_connector
         self.electrs_connector = electrs_connector
         self.neo4j_connector = neo4j_connector
 
     def _get_transaction_from_neo4j(self, tx_hash: str) -> Optional[Dict[str, Any]]:
-        """Recupera dati completi da Neo4j e li formatta come RPC."""
+        """Recupera i dati completi di una transazione da Neo4j."""
         try:
+            # Provo prima con la query completa
             result = self.neo4j_connector.get_full_transaction_data(tx_hash)
-            if not result or not result[0] or 't' not in result[0]: return None
+            if not result:
+                return None
             
             record = result[0]
+            
+            # Controllo se ho il formato atteso
+            if 't' not in record:
+                print(f"Formato dati inaspettato da Neo4j per {tx_hash}")
+                return None
+                
             tx_data = record['t']
             inputs = record.get('inputs', [])
             outputs = record.get('outputs', [])
             
+            # Converto nel formato compatibile con Bitcoin RPC
             formatted_tx = {
-                'txid': tx_data['TXID'], 'time': tx_data.get('time'),
-                'vin': [], 'vout': [],
-                'input_value_total': safe_float_conversion(tx_data.get('input_value'))
+                'txid': tx_data['TXID'],
+                'time': tx_data.get('time'),
+                'vin': [],
+                'vout': []
             }
             
+            # Formatto gli input filtrando quelli vuoti
             valid_inputs = [inp for inp in inputs if inp and inp.get('utxo_id')]
-            for inp in valid_inputs:
+            for i, inp in enumerate(valid_inputs):
                 utxo_parts = inp['utxo_id'].split(':')
                 formatted_tx['vin'].append({
-                    'txid': utxo_parts[0],
+                    'txid': utxo_parts[0] if len(utxo_parts) > 0 else inp['utxo_id'],
                     'vout': int(utxo_parts[1]) if len(utxo_parts) > 1 else 0,
-                    'value': safe_float_conversion(inp.get('value')) 
+                    'value': safe_float_conversion(inp.get('value'))
                 })
             
+            # Formatto gli output filtrando quelli vuoti
             valid_outputs = [out for out in outputs if out and out.get('utxo_id')]
             for i, out in enumerate(valid_outputs):
-                 # Aggiungiamo 'n' basato sull'ordine in Neo4j se non presente
-                 output_n = out.get('index', i) # Usa 'index' se c'è, altrimenti l'indice della lista
-                 addr = out.get('address', 'unknown')
-                 
-                 formatted_tx['vout'].append({
-                    'n': output_n,
+                formatted_tx['vout'].append({
+                    'n': i,
                     'value': safe_float_conversion(out.get('value')),
-                    'scriptPubKey': {'addresses': [addr] if addr else []},
+                    'scriptPubKey': {'addresses': [out.get('address')] if out.get('address') else []},
                     'spending_tx_hash': out.get('spending_tx_hash')
-                 })
-                 
-            # Ordina gli output per indice 'n' per consistenza
-            formatted_tx['vout'] = sorted(formatted_tx['vout'], key=lambda x: x['n'])
-
+                })
+            
             return formatted_tx
+            
         except Exception as e:
-            print(f"Errore recupero da Neo4j ({tx_hash}): {e}")
+            print(f"Errore nel recupero da Neo4j per {tx_hash}: {e}")
             return None
 
     def _find_next_transaction_neo4j(self, tx_hash: str, output_index: int) -> Optional[str]:
-        """Trova la transazione spesa da Neo4j."""
+        """Trova la transazione che spende un output specifico usando Neo4j."""
         utxo_id = f"{tx_hash}:{output_index}"
         try:
             result = self.neo4j_connector.find_spending_transaction(utxo_id)
-            return result[0]['spending_tx_hash'] if result and result[0].get('spending_tx_hash') else None
+            if result and result[0]['spending_tx_hash']:
+                return result[0]['spending_tx_hash']
+            return None
         except Exception as e:
-            print(f"Errore ricerca spender Neo4j ({utxo_id}): {e}")
+            print(f"Errore nella ricerca spending transaction per {utxo_id}: {e}")
             return None
 
     def _get_total_input_value(self, raw_tx: Dict[str, Any]) -> float:
-        """Calcola il valore totale degli input, priorità a Neo4j, fallback a Bitcoin Core."""
-        # Se il valore è già stato calcolato da Neo4j
-        if raw_tx.get('input_value_total', 0) > 0:
-            return raw_tx['input_value_total']
-
+        """Calcola il valore totale degli input di una transazione usando principalmente Neo4j."""
         total_value = 0.0
+        
+        # Se trovo il valore già presente nella transazione (da Neo4j) lo riuso
+        if 'input_value_total' in raw_tx:
+            return safe_float_conversion(raw_tx['input_value_total'])
+        
         for vin in raw_tx.get('vin', []):
-            # Se il valore è nell'input (recuperato da Neo4j _get_transaction_from_neo4j)
-            if 'value' in vin and vin['value'] is not None:
+            if 'value' in vin:
+                # In questo caso il valore è già presente (da Neo4j)
                 total_value += safe_float_conversion(vin['value'])
-            else: # Fallback: recupera dal nodo Bitcoin
-                source_tx_hash, source_tx_index = vin.get('txid'), vin.get('vout')
-                if not source_tx_hash or source_tx_hash == "0" * 64: continue # Salta coinbase
+            else:
+                # Come fallback recupero dal nodo Bitcoin solo se necessario
+                source_tx_hash = vin.get('txid')
+                source_tx_index = vin.get('vout')
+                
+                # Salto gli input coinbase
+                if not source_tx_hash or source_tx_hash == "0" * 64:
+                    continue
 
                 try:
-                    # NOTA: Evitiamo chiamate RPC non necessarie se possibile
-                    # Questo potrebbe essere chiamato solo se Neo4j non aveva il valore
-                    print(f"Fallback: Recupero valore input da nodo Bitcoin per {source_tx_hash[:10]}...:{source_tx_index}")
+                    print(f"🔄 Recupero valore input da nodo Bitcoin per {source_tx_hash}:{source_tx_index}")
                     source_tx_data = self.btc_connector.get_transaction(source_tx_hash)
                     if source_tx_data and source_tx_index < len(source_tx_data.get('vout', [])):
                         value = source_tx_data['vout'][source_tx_index]['value']
                         total_value += safe_float_conversion(value)
                 except Exception as e:
-                    print(f"Errore recupero input fallback ({source_tx_hash}:{source_tx_index}): {e}")
+                    print(f"Errore nel recupero input da {source_tx_hash}:{source_tx_index} - {e}")
                     continue
+                
         return total_value
 
-    def _identify_peeling_outputs(self, raw_tx: Dict[str, Any]) -> Tuple[Optional[Dict], Optional[Dict]]:
-        """Identifica output 'peeled' (piccolo) e 'change' (grande)."""
+    def _identify_peeling_outputs(self, raw_tx: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """
+        Identifica l'output 'pelato' (più piccolo) e quello 'resto' (più grande).
+        Assume una transazione standard di peeling con due output.
+        """
         vouts = raw_tx.get('vout', [])
-        # Rilassiamo il controllo a >= 2 output per gestire casi più generali
-        if len(vouts) < 2:
-             print(f"Warning: Transazione {raw_tx.get('txid','N/A')[:10]} ha meno di 2 output ({len(vouts)}).")
-             # Potrebbe essere la fine o una tx non-peeling. Se c'è un solo output, consideralo 'change'?
-             # Per ora, non lo consideriamo peeling standard.
-             return None, None
-
-        valid_vouts = []
+        if len(vouts) != 2:
+            return None, None
+            
+        # Converto i valori in float usando la conversione sicura
         for vout in vouts:
-            vout['value'] = safe_float_conversion(vout.get('value'))
-            # Aggiungi un controllo per 'n' se necessario, o assumi l'ordine
-            if 'n' not in vout: vout['n'] = vouts.index(vout) # Assegna indice se mancante
-            valid_vouts.append(vout)
-
-        # Ordina per valore
-        sorted_vouts = sorted(valid_vouts, key=lambda x: x['value'])
-        peeled_output = sorted_vouts[0] # Il più piccolo
-        change_output = sorted_vouts[-1] # Il più grande
-
-        # Controllo di sicurezza: non dovrebbero essere lo stesso output se ce ne sono >= 2
-        if peeled_output['n'] == change_output['n'] and len(valid_vouts) >=2 :
-             print(f"Warning: Peeled e Change sembrano essere lo stesso output per {raw_tx.get('txid','N/A')[:10]}. Controllare.")
-             # Potrebbe succedere se tutti gli output hanno lo stesso valore?
-             # Gestiamo restituendo il primo e l'ultimo per convenzione.
-
+            if 'value' in vout:
+                vout['value'] = safe_float_conversion(vout['value'])
+            
+        sorted_vouts = sorted(vouts, key=lambda x: x['value'])
+        peeled_output = sorted_vouts[0]
+        change_output = sorted_vouts[1]
+        
         return peeled_output, change_output
 
-    def _calculate_metrics(self, chain_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Calcola metriche finali (semplificato per ora)."""
-        if not chain_data: return {"chain_length": 0, "total_peeled_value": 0.0}
-
-        peeled_values = [tx['peeled_value'] for tx in chain_data]
+    def _analyze_peeling_patterns(self, chain_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analizza i pattern nella peeling chain per identificare comportamenti anomali."""
+        if not chain_data:
+            return {}
+        
+        percentages = [tx['peeled_percentage'] for tx in chain_data]
+        
+        # Mantengo solo il rilevamento delle anomalie
         return {
-            "chain_length": len(chain_data),
-            "total_peeled_value": sum(peeled_values),
-            
+            "anomaly_detection": self._detect_anomalies(percentages)
         }
 
+    def _detect_anomalies(self, percentages: List[float]) -> Dict[str, Any]:
+        """Rileva anomalie nei pattern di peeling usando l'IQR method."""
+        if len(percentages) < 4:
+            return {"anomalies": [], "anomaly_count": 0}
+        
+        q1 = np.percentile(percentages, 25)
+        q3 = np.percentile(percentages, 75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        
+        anomalies = [i for i, p in enumerate(percentages) if p < lower_bound or p > upper_bound]
+        
+        return {
+            "anomalies": anomalies,
+            "anomaly_count": len(anomalies),
+            "lower_bound": lower_bound,
+            "upper_bound": upper_bound
+        }
+
+    def _calculate_metrics(self, chain_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calcola le metriche finali basandosi sui dati raccolti della catena."""
+        if not chain_data:
+            return {
+                "chain_length": 0, 
+                "total_peeled_value": 0.0,
+                "average_peeled_percentage": 0.0, 
+                "advanced_analytics": {}
+            }
+
+        peeled_percentages = [tx['peeled_percentage'] for tx in chain_data if tx['input_value'] > 0]
+        peeled_values = [tx['peeled_value'] for tx in chain_data]
+        
+        # Calcolo le metriche di base
+        base_metrics = {
+            "chain_length": len(chain_data),
+            "total_peeled_value": sum(peeled_values),
+            "average_peeled_percentage": np.mean(peeled_percentages) if peeled_percentages else 0.0,
+            "min_peeled_percentage": min(peeled_percentages) if peeled_percentages else 0.0,
+            "max_peeled_percentage": max(peeled_percentages) if peeled_percentages else 0.0,
+        }
+        
+        # Eseguo l'analisi avanzata
+        advanced_analytics = self._analyze_peeling_patterns(chain_data)
+        base_metrics["advanced_analytics"] = advanced_analytics
+        
+        # Aggiorno con statistiche aggiuntive sui valori
+        if peeled_values:
+            base_metrics.update({
+                "total_value_processed": sum(tx['input_value'] for tx in chain_data),
+                "average_transaction_size": np.mean([tx['input_value'] for tx in chain_data]),
+                "largest_peel": max(peeled_values),
+                "smallest_peel": min(peeled_values)
+            })
+        
+        return base_metrics
+
     def analyze(self, start_hash: str) -> Dict[str, Any]:
-        """Esegue l'analisi completa, priorità a Neo4j."""
-        print(f"\nAvvio analisi peeling chain per: {start_hash}")
+        """
+        Esegue l'analisi completa di una peeling chain a partire da un hash.
+        Utilizza principalmente Neo4j come fonte dati.
+        """
+        print(f"Avvio analisi peeling chain per: {start_hash}")
         chain_data = []
         current_hash = start_hash
-        max_steps_debug = 100 # Limite di sicurezza per evitare cicli infiniti
 
-        while current_hash and len(chain_data) < max_steps_debug:
-            print(f"Analizzo TX: {current_hash[:16]}...")
+        while current_hash:
             try:
-                # 1. Prova a recuperare da Neo4j
+                # Verifico la copertura in Neo4j
+                coverage = check_neo4j_transaction_coverage(self.neo4j_connector, current_hash)
+                
+                # Provo prima con Neo4j
                 raw_tx = self._get_transaction_from_neo4j(current_hash)
-
-                # 2. Fallback: Se Neo4j fallisce o manca, prova Bitcoin Core
+                
                 if not raw_tx:
-                    print(f" Neo4j non ha dati per {current_hash[:10]}... Fallback su Bitcoin Core.")
-                    raw_tx = self.btc_connector.get_transaction(current_hash) # Usa il connettore esistente
-
-                # 3. Se ancora non abbiamo dati, interrompi
+                    print(f"Transazione {current_hash} non trovata in Neo4j")
+                    # In fallback provo con il nodo Bitcoin
+                    print(f"Tentativo di recupero dal nodo Bitcoin...")
+                    raw_tx = self.btc_connector.get_transaction(current_hash)
+                    
                 if not raw_tx:
-                    print(f" Impossibile recuperare dati per {current_hash}. Fine catena.")
                     break
 
-                # 4. Identifica output peeled e change
                 peeled_output, change_output = self._identify_peeling_outputs(raw_tx)
-                if not peeled_output or not change_output:
-                    print(f" Transazione {current_hash[:10]}... non sembra peeling standard. Fine catena.")
-                    break # Non è una transazione peeling standard (o errore)
+                if not peeled_output:
+                    print(f"La transazione {current_hash} non è una peeling classica. Fine della catena.")
+                    break
 
-                # 5. Calcola valori
                 total_input = self._get_total_input_value(raw_tx)
-                peeled_value = peeled_output['value']
-                change_value = change_output['value']
-                peeled_percentage = (peeled_value / total_input) * 100 if total_input > 0 else 0
+                if total_input > 0:
+                    peeled_value = safe_float_conversion(peeled_output['value'])
+                    peeled_percentage = (peeled_value / total_input) * 100
+                else:
+                    print(f"Valore di input nullo per la transazione {current_hash}.")
+                    peeled_value = safe_float_conversion(peeled_output['value'])
+                    peeled_percentage = 0.0
 
                 chain_data.append({
                     "tx_hash": current_hash,
                     "input_value": total_input,
                     "peeled_value": peeled_value,
-                    "change_value": change_value,
+                    "change_value": safe_float_conversion(change_output['value']),
                     "peeled_percentage": peeled_percentage
                 })
 
-                # 6. Trova la prossima transazione
+                # Cerco la prossima transazione usando prima Neo4j
                 next_tx = None
-                change_output_index = change_output['n']
-
-                # 6a. Prova Neo4j
+                change_output_index = change_output.get('n', 1)  # Di solito considero l'output di change all'indice 1
+                
+                # Metodo 1: cerco in Neo4j
                 next_tx = self._find_next_transaction_neo4j(current_hash, change_output_index)
                 
-                # 6b. Fallback: Se Neo4j non trova, prova Electrs
                 if not next_tx:
-                    print(f" Neo4j non ha lo spender per {current_hash[:10]}...:{change_output_index}. Fallback su Electrs...")
-                    # NOTA: Assumiamo che electrs_connector esista e sia configurato
+                    # Metodo 2: passo al fallback con Electrs
+                    print(f"Neo4j non ha trovato la prossima transazione, provo con Electrs...")
                     next_tx = self.electrs_connector.get_spending_tx(
                         self.btc_connector, current_hash, change_output_index
                     )
                 
                 if next_tx:
-                     print(f" Prossima TX trovata: {next_tx[:16]}...")
-                     current_hash = next_tx
+                    current_hash = next_tx
                 else:
-                     print(f" Nessuna transazione successiva trovata per {current_hash[:10]}...:{change_output_index}. Fine catena.")
-                     current_hash = None # Fine della catena
-
+                    current_hash = None
+                    
             except Exception as e:
-                print(f"Errore durante l'analisi di {current_hash}: {e}")
-                import traceback
-                traceback.print_exc() # Stampa traceback per debug
-                break # Interrompi in caso di errore grave
-
-        if len(chain_data) >= max_steps_debug:
-             print(f"Warning: Raggiunto limite massimo di {max_steps_debug} passi. Interruzione.")
-
-        final_metrics = self._calculate_metrics(chain_data)
-        final_metrics["chain"] = chain_data # Aggiunge la catena raccolta ai risultati
+                break
         
-        print(f"Analisi completata. Lunghezza catena: {len(chain_data)}")
+        final_metrics = self._calculate_metrics(chain_data)
+        final_metrics["chain"] = chain_data
+        
         return final_metrics

@@ -3,43 +3,58 @@ from connectors.neo4j_connector import Neo4jConnector
 from connectors.electrs_connector import ElectrsConnector
 from connectors.public_api_connector import PublicApiConnector
 from core.data_parser import DataParser
-from typing import Tuple
+from typing import Tuple, Dict, Any
+from analysis.peeling_chain_analyzer import PeelingChainAnalyzer
 
 class Manager:
+    """
+    Orchestra le operazioni dell'applicazione, coordinando i connettori
+    e il parser dei dati.
+    """
     def __init__(self):
+        """Inizializza tutti i componenti necessari."""
         self.btc_connector = BitcoinConnector()
         self.neo4j_connector = Neo4jConnector()
         self.electrs_connector = ElectrsConnector()
         self.public_api_connector = PublicApiConnector()
         self.parser = DataParser()
         self.using_public_api = False
-        self.public_api_steps = 0 # Contatore per ritornare al nodo locale
+        self.public_api_steps = 0 # Tengo il contatore per ritornare al nodo locale dopo 5 passi
 
     def start_peeling_chain_analysis(self, start_hash: str) -> Dict[str, Any]:
         """
         Inizializza e avvia l'analisi di una peeling chain.
+
+        Questo metodo agisce come un ponte verso il modulo di analisi,
+        fornendogli i connettori necessari per operare.
+
+        Args:
+            start_hash: L'hash della transazione da cui iniziare l'analisi.
+
+        Returns:
+            Un dizionario con i risultati completi dell'analisi.
         """
         print("\n--- Avvio del Modulo di Analisi Peeling Chain ---")
+        
         analyzer = PeelingChainAnalyzer(
             btc_connector=self.btc_connector,
-            electrs_connector=self.electrs_connector, # Passa il connettore Electrs
+            electrs_connector=self.electrs_connector,
             neo4j_connector=self.neo4j_connector
         )
-        # Avvia l'analisi e restituisce i risultati
+        
         analysis_results = analyzer.analyze(start_hash)
-        print("--- Analisi Peeling Chain Completata ---")
+        
         return analysis_results
-
+    
     def _ask_user_fallback_permission(self) -> bool:
         """
         Chiede all'utente se vuole passare all'API pubblica quando il nodo locale fallisce.
         """
-        source = "Electrs" if not self.btc_connector.rpc_connection else "Bitcoin Core" # Indica quale nodo ha fallito
-        print(f"\nATTENZIONE: Il nodo locale ({source}) non risponde o ha fallito!")
+        print("\nATTENZIONE: Il nodo Bitcoin locale non risponde!")
         print("Opzioni disponibili:")
         print("  1. Passa all'API pubblica (mempool.space) per continuare")
         print("  2. Interrompi l'operazione e mantieni solo il nodo locale")
-
+        
         while True:
             try:
                 choice = input("Scegli un'opzione (1 o 2): ").strip()
@@ -61,123 +76,107 @@ class Manager:
         """
         if self.using_public_api and self.public_api_steps >= 5:
             print("\nTentativo di ritorno al nodo locale dopo 5 passi con API pubblica...")
-            # Testa la connessione al nodo Bitcoin Core
-            if self.btc_connector.rpc_connection:
+            
+            # Testo la connessione al nodo locale
+            test_result = self.btc_connector.rpc_connection
+            if test_result:
                 try:
-                    # Prova una chiamata semplice per verificare che funzioni
+                    # Provo una chiamata semplice per verificare che funzioni
                     self.btc_connector.rpc_connection.getblockchaininfo()
-                    print("Nodo Bitcoin Core locale di nuovo disponibile! Ritorno alla modalità locale.")
+                    print("Nodo locale di nuovo disponibile! Ritorno al nodo locale.")
                     self.using_public_api = False
-                    self.public_api_steps = 0 # Resetta il contatore
-                    return True # Successo nel tornare a locale
-                except Exception as e:
-                    print(f"Nodo Bitcoin Core locale ancora non pienamente operativo ({e}). Continuo con API pubblica.")
-                    # Reset il contatore per riprovare tra altri 5 passi
                     self.public_api_steps = 0
-                    return False # Fallito, resta su API
+                    return True
+                except:
+                    print("Nodo locale ancora non disponibile. Continuo con API pubblica.")
+                    # Resetto il contatore per riprovare tra altri 5 passi
+                    self.public_api_steps = 0
+                    return False
             else:
-                print("Nodo Bitcoin Core locale ancora non disponibile. Continuo con API pubblica.")
-                # Reset il contatore per riprovare tra altri 5 passi
+                print("Nodo locale ancora non disponibile. Continuo con API pubblica.")
+                # Resetto il contatore per riprovare tra altri 5 passi
                 self.public_api_steps = 0
-                return False # Fallito, resta su API
-        return False # Non è il momento di provare o non eravamo in API
+                return False
 
     def store_transaction_by_hash(self, tx_hash: str) -> dict:
         """
-        Flusso completo per recuperare, parsare e archiviare una transazione,
-        con fallback all'API pubblica e tentativi di ritorno a locale.
+        Flusso completo per recuperare, parsare e archiviare una transazione.
         """
         print(f"\n--- Inizio processamento transazione: {tx_hash} ---")
-        raw_tx = None
         
-        # Prova a ritornare al nodo locale PRIMA di iniziare
+        # Provo a ritornare al nodo locale se ho fatto 5 passi con API pubblica
         self._try_return_to_local_node()
-
-        # 1. Prova il nodo locale (se non siamo già forzati su API)
+        
+        # Se non sto già usando l'API pubblica, provo il nodo locale
         if not self.using_public_api:
             raw_tx = self.btc_connector.get_transaction(tx_hash)
             if not raw_tx:
+                # Chiedo all'utente se vuole passare all'API pubblica
                 if self._ask_user_fallback_permission():
                     self.using_public_api = True
-                    print("Passaggio temporaneo all'API pubblica...")
-                    # Non resettare subito public_api_steps qui, fallo solo quando usi l'API
+                    self.public_api_steps = 0
                 else:
-                    print(f"--- Processamento interrotto per {tx_hash}: nodo locale non disponibile e fallback rifiutato. ---")
+                    print(f"--- Processamento interrotto per {tx_hash}: nodo locale non disponibile e utente ha rifiutato API pubblica. ---")
                     return None
-
-        # 2. Se serve l'API pubblica
-        if self.using_public_api and raw_tx is None:
-             print(f"Tentativo di recupero tramite API pubblica per {tx_hash}...")
-             raw_tx = self.public_api_connector.get_transaction(tx_hash)
-             if not raw_tx:
-                 print(f"--- Processamento fallito: transazione {tx_hash} non trovata neanche su API pubblica. ---")
-                 return None
-             self.public_api_steps += 1 # Incrementa solo se l'API è stata USATA con successo
-
-        # --- Da qui in poi, raw_tx dovrebbe esistere ---
-
-        block_hash = raw_tx.get('blockhash')
-        block_height = 0
+        
+        # Se sto usando l'API pubblica o il nodo locale ha fallito e l'utente ha accettato
         if self.using_public_api:
-             if block_hash:
-                 block_height = self.public_api_connector.get_block_height(block_hash)
-             elif raw_tx.get('blockheight'):
-                 block_height = raw_tx.get('blockheight')
+            raw_tx = self.public_api_connector.get_transaction(tx_hash)
+            if not raw_tx:
+                print(f"--- Processamento fallito: transazione {tx_hash} non trovata neanche su API pubblica. ---")
+                return None
+            # Incremento il contatore dei passi con API pubblica
+            self.public_api_steps += 1
+
+        # Ottengo l'altezza del blocco
+        block_hash = raw_tx.get('blockhash')
+        if self.using_public_api:
+            # Con l'API pubblica, provo a utilizzare l'altezza del blocco se disponibile
+            block_height = raw_tx.get('blockheight', 0)
+            if block_height == 0 and block_hash:
+                # Come fallback, chiedo l'altezza all'API pubblica se ho l'hash del blocco
+                block_height = self.public_api_connector.get_block_height(block_hash)
         else:
-            if block_hash:
-                 block_height = self.btc_connector.get_block_height(block_hash)
+            block_height = self.btc_connector.get_block_height(block_hash)
 
-        is_coinbase = False
-        if raw_tx.get('vin') and isinstance(raw_tx['vin'][0], dict):
-             if 'coinbase' in raw_tx['vin'][0] or raw_tx['vin'][0].get("is_coinbase") == True:
-                 is_coinbase = True
-
-        if is_coinbase:
-            print("Transazione Coinbase rilevata.")
+        if 'coinbase' in raw_tx['vin'][0]:
+            print("Transazione Coinbase rilevata. Non ci sono input da processare.")
             inputs_data = []
             total_input_value = 0.0
         else:
-            # Passiamo lo stato API a _process_inputs implicitamente tramite self.using_public_api
             success, inputs_data, total_input_value = self._process_inputs(raw_tx)
             if not success:
-                print(f"--- Processamento interrotto per {tx_hash}: impossibile recuperare tutti gli input.")
+                print(f"--- Processamento interrotto per {tx_hash}: impossibile recuperare tutti gli input. "
+                      "Possibili cause:\n"
+                      "  1. Il tuo nodo Bitcoin è in modalità 'pruned'.\n"
+                      "  2. L'indice delle transazioni non è attivo o è corrotto (prova a riavviare con -reindex).")
                 return None
 
         outputs_data = self.parser.parse_outputs(raw_tx)
         tx_info = self.parser.parse_transaction(raw_tx, total_input_value, block_height)
-        tx_info['coinbase'] = is_coinbase
 
         self.neo4j_connector.store_transaction_info(tx_info, inputs_data, outputs_data)
-        mode_used = "API Pubblica" if self.using_public_api else "Nodo Locale"
-        api_step_info = f" (Passo API: {self.public_api_steps})" if self.using_public_api else ""
-        print(f"--- Fine processamento transazione: {tx_hash} (utilizzando {mode_used}{api_step_info}) ---")
+        print(f"--- Fine processamento transazione: {tx_hash} ---")
         return raw_tx
 
     def trace_transaction_path(self, start_hash: str, max_steps: int = None):
         """
-        Analizza una transazione e segue il flusso di denaro, con fallback API
-        per Electrs e tentativi di ritorno a locale.
+        Analizza una transazione e segue il flusso di denaro per un numero massimo
+        di passi o fino a raggiungere un UTXO non speso.
         """
         print("\n--- Avvio Tracciamento Automatico del Percorso ---")
         current_hash = start_hash
         step = 1
 
         while current_hash and (max_steps is None or step <= max_steps):
-            
-            # Tenta ritorno a locale all'inizio di ogni passo del tracciamento
-            self._try_return_to_local_node()
-            
-            mode_str = "API pubblica" if self.using_public_api else "nodo locale"
-            api_step_info = f" (Passo API: {self.public_api_steps})" if self.using_public_api else ""
-            print(f"\n--- Passo {step}: Analisi di {current_hash} (usando {mode_str}{api_step_info}) ---")
-            
-            # store_transaction_by_hash gestisce già il fallback per il recupero TX
+            print(f"\n--- Passo {step}: Analisi di {current_hash} ---")
             raw_tx = self.store_transaction_by_hash(current_hash)
 
             if not raw_tx:
                 print("Tracciamento interrotto: la transazione non può essere processata.")
                 break
 
+            # Se raggiungo il numero massimo di passi, mi fermo qui
             if max_steps and step == max_steps:
                 print(f"\n--- Raggiunto limite massimo di {max_steps} passi. Tracciamento concluso. ---")
                 break
@@ -185,60 +184,46 @@ class Manager:
             next_hash = None
             highest_value = -1.0
             unspent_output = None
-            spending_tx = None # Per memorizzare il risultato della ricerca spender
 
-            # Trova l'output con il valore più alto e cerca chi lo spende
             for i, vout in enumerate(raw_tx.get('vout', [])):
                 current_value = float(vout['value'])
                 if current_value > highest_value:
                     highest_value = current_value
                     
-                    # Cerca la transazione che spende questo output
-                    spending_tx = None # Resetta per questo output
+                    # Provo a ritornare al nodo locale se ho fatto 5 passi con API pubblica
+                    self._try_return_to_local_node()
+                    
+                    # Uso la strategia appropriata in base alla modalità corrente
                     if self.using_public_api:
-                        # Se siamo GIA' in modalità API, usala direttamente
-                        print(f"Ricerca spender per {current_hash[:10]}...:{i} tramite API pubblica...")
+                        print(f"Ricerca dello spender per {current_hash[:10]}...:{i} tramite API pubblica...")
                         spending_tx = self.public_api_connector.get_spending_tx(current_hash, i)
-                        # Incrementa contatore API se la chiamata ha successo (anche se non trova spender)
-                        if spending_tx is not None: # Verifica se la chiamata è andata a buon fine
-                             self.public_api_steps += 1
                     else:
-                        # Altrimenti, prova prima Electrs locale
-                        print(f"Tentativo di trovare lo spender per {current_hash[:10]}...:{i} tramite Electrs locale...")
+                        print(f"Tentativo di trovare lo spender per {current_hash[:10]}...:{i} tramite nodo locale (electrs)...")
                         spending_tx = self.electrs_connector.get_spending_tx(self.btc_connector, current_hash, i)
                         
-                        # Se Electrs fallisce E NON siamo già in modalità API
-                        if spending_tx is None and not self.using_public_api:
-                             # Eseguiamo il controllo in modo più robusto: get_spending_tx potrebbe tornare None
-                             # anche se la connessione funziona ma l'UTXO non è speso. Dobbiamo distinguere.
-                             # Per ora, assumiamo che None significhi fallimento O non speso.
-                             # Se vogliamo essere più precisi, ElectrsConnector dovrebbe sollevare eccezioni specifiche.
-                             
-                             print(f"Electrs non ha trovato lo spender (o non è disponibile).")
-                             if self._ask_user_fallback_permission():
-                                 self.using_public_api = True # Passa a modalità API
-                                 print(f"Tentativo con API pubblica per {current_hash[:10]}...:{i}...")
-                                 spending_tx = self.public_api_connector.get_spending_tx(current_hash, i)
-                                 # Incrementa contatore se chiamata API ha successo
-                                 if spending_tx is not None:
-                                      self.public_api_steps += 1
-                             else:
-                                 print("Tracciamento interrotto: Electrs non disponibile e fallback rifiutato.")
-                                 return # Interrompe tutto il tracciamento
+                        if not spending_tx:
+                            # Chiedo all'utente se vuole passare all'API pubblica
+                            if self._ask_user_fallback_permission():
+                                self.using_public_api = True
+                                self.public_api_steps = 0
+                                spending_tx = self.public_api_connector.get_spending_tx(current_hash, i)
+                            else:
+                                print("Tracciamento interrotto: electrs non disponibile e utente ha rifiutato API pubblica.")
+                                return
 
-                    # Aggiorna next_hash e unspent_output in base al risultato
                     if spending_tx:
                         next_hash = spending_tx
-                        unspent_output = None
+                        unspent_output = None 
                     else:
-                        # Se NESSUNA fonte ha trovato uno spender per questo output (il più alto finora)
                         unspent_output = (current_hash, i, current_value)
-                        next_hash = None # Assicura che non si vada avanti se l'output maggiore non è speso
+                        next_hash = None
 
-            current_hash = next_hash # Aggiorna l'hash per il prossimo ciclo
+            current_hash = next_hash
 
             if current_hash:
-                print(f"Flusso principale prosegue nella transazione: {current_hash}")
+                mode_str = "API pubblica" if self.using_public_api else "nodo locale"
+                steps_info = f" (passo {self.public_api_steps}/5 con API)" if self.using_public_api else ""
+                print(f"Flusso principale prosegue nella transazione: {current_hash} (usando {mode_str}{steps_info})")
                 step += 1
             else:
                 print("\n--- Tracciamento Concluso ---")
@@ -248,74 +233,44 @@ class Manager:
                     print(f"  TXID: {txid}:{vout_index}")
                     print(f"  Valore: {value} BTC")
                 else:
-                    # Questo caso potrebbe verificarsi se l'ultimo TX analizzato non aveva output
-                    # o se c'è stato un errore imprevisto.
-                    print("Nessun percorso valido da seguire trovato o l'ultimo output non era spendibile.")
-                break # Esce dal ciclo while
-
+                    print("Nessun percorso da seguire o tutti gli output sono stati spesi.")
 
     def _process_inputs(self, raw_tx: dict) -> Tuple[bool, list, float]:
-        """Metodo ausiliario aggiornato per gestire il fallback e incrementare il contatore API."""
+        """Metodo ausiliario che recupera gli input uno per uno."""
+
         parsed_inputs = []
         total_value = 0.0
         
-        vin_list = raw_tx.get('vin', [])
-        if not vin_list: return True, [], 0.0
-        
-        print(f"Recupero dei {len(vin_list)} input della transazione...")
+        print(f"Recupero dei {len(raw_tx['vin'])} input della transazione...")
+        for vin in raw_tx['vin']:
+            source_tx_hash, source_tx_index = vin['txid'], vin['vout']
 
-        for vin in vin_list:
-             if 'coinbase' in vin or vin.get("is_coinbase") == True:
-                 continue
-                 
-             source_tx_hash, source_tx_index = vin.get('txid'), vin.get('vout')
-             if not source_tx_hash or source_tx_index is None:
-                 print(f"Attenzione: dati input mancanti o non validi: {vin}")
-                 continue
-
-             source_tx_data = None
-             used_api_for_this_input = False # Flag locale
-
-             # 1. Prova la fonte dati corrente
-             if self.using_public_api:
-                 source_tx_data = self.public_api_connector.get_transaction(source_tx_hash)
-                 used_api_for_this_input = True # Abbiamo provato l'API
-             else:
-                 source_tx_data = self.btc_connector.get_transaction(source_tx_hash)
-
-             # 2. Se fallisce e non eravamo già in API, tenta il fallback
-             if not source_tx_data and not self.using_public_api:
-                 print(f"Input {source_tx_hash[:10]}... non trovato su nodo locale. Tentativo con API pubblica...")
-                 if self._ask_user_fallback_permission():
-                      self.using_public_api = True
-                      source_tx_data = self.public_api_connector.get_transaction(source_tx_hash)
-                      used_api_for_this_input = True # Abbiamo usato l'API
-                 else:
-                     print(f"Recupero input {source_tx_hash[:10]}... fallito: fallback rifiutato.")
-                     return False, [], 0.0
-
-             # 3. Se ancora non abbiamo i dati
-             if not source_tx_data:
-                 print(f"Attenzione: impossibile recuperare transazione origine {source_tx_hash}.")
-                 return False, [], 0.0
-                 
-             # 4. Incrementa contatore API se abbiamo usato l'API per QUESTO input
-             if used_api_for_this_input:
-                  self.public_api_steps += 1
-
-             # Verifica indice vout
-             if source_tx_index >= len(source_tx_data.get('vout',[])):
-                  print(f"Attenzione: indice vout {source_tx_index} non valido per TX origine {source_tx_hash}")
-                  return False, [], 0.0
-                  
-             source_vout = source_tx_data['vout'][source_tx_index]
-             source_vout['txid_creator'] = source_tx_hash
-             parsed_input = self.parser.parse_input(source_vout, raw_tx['txid'])
-             parsed_inputs.append(parsed_input)
-             total_value += float(parsed_input['value'])
+            # Uso la strategia appropriata in base alla modalità corrente
+            if self.using_public_api:
+                source_tx_data = self.public_api_connector.get_transaction(source_tx_hash)
+            else:
+                source_tx_data = self.btc_connector.get_transaction(source_tx_hash)
+                if not source_tx_data:
+                    # Chiedo all'utente se vuole passare all'API pubblica
+                    if self._ask_user_fallback_permission():
+                        self.using_public_api = True
+                        self.public_api_steps = 0
+                        source_tx_data = self.public_api_connector.get_transaction(source_tx_hash)
+                    else:
+                        print(f"Input {source_tx_hash[:10]}... non trovato su nodo locale e utente ha rifiutato API pubblica.")
+                        return False, [], 0.0
+            
+            if source_tx_data:
+                source_vout = source_tx_data['vout'][source_tx_index]
+                source_vout['txid_creator'] = source_tx_hash 
+                parsed_input = self.parser.parse_input(source_vout, raw_tx['txid'])
+                parsed_inputs.append(parsed_input)
+                total_value += float(parsed_input['value'])
+            else:
+                print(f"Attenzione: impossibile recuperare la transazione di origine {source_tx_hash}")
+                return False, [], 0.0
         
         return True, parsed_inputs, total_value
-
 
     def delete_transaction(self, tx_hash: str):
         print(f"\n--- Richiesta eliminazione transazione: {tx_hash} ---")
@@ -333,8 +288,7 @@ class Manager:
         print("\n--- Chiusura delle connessioni... ---")
         self.neo4j_connector.close()
         if self.using_public_api:
-            # Messaggio più specifico
-            print(f"Sessione terminata. L'API pubblica è stata utilizzata per {self.public_api_steps} operazioni.")
+            print(f"Sessione terminata utilizzando l'API pubblica ({self.public_api_steps} passi effettuati).")
         else:
-            print("Sessione terminata utilizzando esclusivamente il nodo locale.")
+            print("Sessione terminata utilizzando il nodo locale.")
         print("Tutte le connessioni sono state chiuse. Arrivederci!")
