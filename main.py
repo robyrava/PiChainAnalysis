@@ -5,9 +5,12 @@ from analysis.visualizer import (
     plot_peeling_chain_monthly_distribution,
     create_statistics_report,
     create_fan_in_visualizations,
-    create_fan_in_report
+    create_fan_in_report,
+    create_fan_out_visualizations,
+    create_fan_out_report
 )
 from analysis.fan_in_analyzer import FanInAnalyzer
+from analysis.fan_out_analyzer import FanOutAnalyzer
 
 def display_main_menu():
     """Stampa il menu principale delle operazioni."""
@@ -34,7 +37,8 @@ def display_analysis_menu():
     print("\n--- Menu Analisi ---")
     print("  1. Analisi Peeling Chain")
     print("  2. Analisi Fan-In")
-    print("  3. Torna al menu principale")
+    print("  3. Analisi Fan-Out")
+    print("  4. Torna al menu principale")
 
 def handle_analysis_menu(manager: Manager):
     """Gestisce la logica per le varie operazioni di analisi."""
@@ -47,7 +51,7 @@ def handle_analysis_menu(manager: Manager):
                 if start_hash:
                     results = manager.start_peeling_chain_analysis(start_hash)
                     
-                    # Mostra il report statistiche avanzate
+                    # Mostra il report statistiche
                     create_statistics_report(results)
                     
                     # Salva automaticamente i grafici nella cartella plot
@@ -88,6 +92,35 @@ def handle_analysis_menu(manager: Manager):
                     print("Errore: L'hash non può essere vuoto.")
                     
             elif choice == 3:
+                tx_hash = input("Inserisci il TXID sospetto di Fan-Out:\n--> ").strip()
+                if tx_hash:
+                    try:
+                        # Crea l'analizzatore Fan-Out
+                        fan_out_analyzer = FanOutAnalyzer(
+                            btc_connector=manager.btc_connector,
+                            neo4j_connector=manager.neo4j_connector,
+                            public_api_connector=manager.public_api_connector
+                        )
+                        
+                        # Esegui l'analisi
+                        results = fan_out_analyzer.analyze(tx_hash)
+                        
+                        if results:
+                            # Mostra il report testuale
+                            create_fan_out_report(results)
+                            
+                            # Genera i grafici
+                            create_fan_out_visualizations(results)
+                        else:
+                            print("Analisi fallita. Verifica che la transazione esista.")
+                    except Exception as e:
+                        print(f"\nErrore durante l'analisi Fan-Out: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print("Errore: L'hash non può essere vuoto.")
+                    
+            elif choice == 4:
                 break
             else:
                 print("Scelta non valida. Riprova.")
