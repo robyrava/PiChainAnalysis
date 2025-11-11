@@ -10,10 +10,11 @@ Questo progetto è nato con l'obiettivo di creare uno strumento di chain analysi
 
 - **🔒 Privacy-First**: Priorità assoluta al nodo locale per mantenere la privacy
 - **🔄 Fallback Intelligente**: Sistema di backup con API pubbliche (mempool.space) con consenso dell'utente
-- **📊 Analisi Automatica**: Tracciamento automatico del flusso di denaro attraverso le transazioni
-- **� Statistiche Avanzate**: Analisi approfondite con metriche di Gini, entropia, rilevamento anomalie
-- **🎨 Visualizzazioni Interattive**: Grafi dinamici, dashboard complete e report dettagliati
-- **�🗃️ Archiviazione Strutturata**: Salvataggio dei dati in formato grafo per analisi avanzate
+- **📊 Analisi Automatica**: Tracciamento automatico del flusso di denaro e analisi dedicate (Peeling, Fan-In, Fan-Out)
+- **📈 Statistiche Avanzate**: Analisi approfondite con metriche di Gini, entropia, Coin Days Destroyed e rilevamento anomalie
+- **🎯 Profili Fan-In / Fan-Out**: Identificazione dei pattern di consolidamento e distribuzione con euristiche pagamento/resto e score di uniformità
+- **🎨 Visualizzazioni Interattive**: Grafi dinamici, dashboard complete e report dettagliati per ogni tipo di analisi
+- **🗃️ Archiviazione Strutturata**: Salvataggio dei dati in formato grafo per analisi avanzate
 - **⚡ Connessioni Multiple**: Supporto per Bitcoin Core RPC, Electrs e API pubbliche
 - **🎯 Ricerca UTXO**: Individuazione automatica di output non spesi
 - **🧹 Gestione Dati**: Strumenti completi per eliminare e gestire i dati archiviati
@@ -28,6 +29,16 @@ Questo progetto è nato con l'obiettivo di creare uno strumento di chain analysi
 - **Rilevamento Anomalie**: Identificazione automatica di transazioni irregolari
 - **Analisi Clustering**: Raggruppamento di transazioni con comportamenti simili
 - **Score di Consistenza**: Valutazione della regolarità dei pattern
+
+### Profili Fan-In
+- **Coin Days Destroyed**: Calcolo per ogni input e media aggregata
+- **Distribuzione dell'Età**: Istogrammi per fascia temporale e analisi oraria degli input
+- **Identificazione Pagamento/Rest**: Euristiche per distinguere il pagamento primario dal cambio
+
+### Profili Fan-Out
+- **Coefficienti di Uniformità**: Deviazione standard, coefficiente di variazione e Gini sugli output
+- **Categorizzazione Dinamica**: Classificazione small/medium/large rispetto alla media degli output
+- **Analisi Stato Uscite**: Percentuale di output già spesi vs non spesi
 
 ### Visualizzazioni Multiple
 - **Grafo Interattivo**: Visualizzazione delle transazioni come rete di nodi connessi
@@ -60,6 +71,8 @@ Contiene i moduli responsabili della comunicazione con servizi esterni:
 Moduli specializzati per analisi avanzate e visualizzazioni:
 
 - **`peeling_chain_analyzer.py`**: Analisi statistiche avanzate delle peeling chain
+- **`fan_in_analyzer.py`**: Analisi Fan-In (many-to-one) con metriche temporali e Coin Days Destroyed
+- **`fan_out_analyzer.py`**: Analisi Fan-Out (one-to-many) con score di uniformità e categorizzazione output
 - **`visualizer.py`**: Generazione di grafici interattivi e dashboard
 
 ### 4. **Strato di Presentazione (`main.py`)**
@@ -165,7 +178,13 @@ Strumenti completi per la pulizia e manutenzione del database:
 - **Eliminazione completa**: Rimuove transazione e tutti gli UTXO correlati
 - **Elimina UTXO specifico**: Rimozione mirata di singoli output
 
-### 🔄 **4. Sistema di Fallback Intelligente**
+### � **4. Analisi Avanzate (Peeling / Fan-In / Fan-Out)**
+- **Modulo Peeling Chain**: ricostruzione automatica della catena, metriche percentuali e rilevamento anomalie (IQR)
+- **Modulo Fan-In**: calcolo Coin Days Destroyed, distribuzioni temporali degli input, identificazione pagamento vs resto e salvataggio metriche in Neo4j
+- **Modulo Fan-Out**: coefficiente di variazione/Gini sugli output, score di uniformità e categorie dinamiche small/medium/large
+- **Report & Visualizzazioni**: output testuale immediato più grafici dedicati (istogrammi età/orari, distribuzioni output, timeline)
+
+### �🔄 **5. Sistema di Fallback Intelligente**
 
 #### **Strategia Privacy-First:**
 1. **Tentativo primario**: Sempre il nodo Bitcoin locale
