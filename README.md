@@ -255,11 +255,3 @@ Il software crea una struttura grafo ottimizzata per l'analisi:
   value: 0.5,
   is_spent: false
 }
-
-
-## 📄 Licenza
-
-[Inserire informazioni sulla licenza]
-
-
-**Note sulla Privacy**: PiChainAnalysis è progettato per massimizzare la privacy utilizzando principalmente il tuo nodo locale. L'uso di API pubbliche avviene solo con il tuo consenso esplicito e in situazioni di necessità.
